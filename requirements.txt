@@ -1,0 +1,11 @@
+# Core dependencies for this project's verified logic have ZERO
+# requirements beyond the Python standard library — see
+# docs/architecture.md for the honest verified/unverified split.
+
+# Everything below is required only for the UNVERIFIED, LLM/MCP-dependent
+# pieces (mcp_servers/*_server.py's MCP wrapper layer, and
+# guardrails/injection_screening.py's real llm_injection_classifier) —
+# none of these are installed or usable in this project's own
+# development/CI environment.
+mcp>=1.0.0
+anthropic>=0.40.0
