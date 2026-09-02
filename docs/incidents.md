@@ -67,6 +67,38 @@ real LLM-based classifier actually makes this distinction correctly
 is real, necessary work for whoever deploys this, not something to
 assume works just because the prompt asks for it clearly.
 
+## 4. Running the real classifier for the first time: a genuine API requirement neither of us anticipated, then a clean, confirmed pass
+
+The very first real call to `llm_injection_classifier` — genuinely
+the first execution of this function anywhere, against Claude's actual
+API rather than a mock — failed immediately with:
+
+```
+anthropic.BadRequestError: Error code: 400 - {'type': 'error',
+'error': {'type': 'invalid_request_error', 'message':
+'anthropic-workspace-id is required when authenticating with an
+identity-linked API key; send the id of the workspace this request
+acts in.'}}
+```
+
+Identity-linked API keys (the current default when creating a key via
+the Claude Console) require an explicit `anthropic-workspace-id`
+header naming which workspace the request acts in — not documented
+anywhere in this project's original code, since neither of us had
+occasion to hit this specific requirement until actually attempting
+the real call. Fixed by reading the workspace ID from a new
+`ANTHROPIC_WORKSPACE_ID` environment variable and passing it via
+`extra_headers` on the `messages.create()` call.
+
+**With that fixed, the real classifier passed all three test cases
+correctly on the very first genuine attempt** — including the hard
+one (#3 above): a threat report describing prompt injection technique,
+*without itself containing an injection attempt*, was correctly
+classified as safe, while an actual injection attempt was correctly
+flagged with a specific, accurate reason. The distinction this
+project's test suite could only assert against a mock is now
+confirmed against the real model.
+
 ## What's verified, and what genuinely isn't yet
 
 Every module in `agents/`, `mcp_servers/*_tool_logic.py`, and
@@ -78,14 +110,17 @@ document produces **zero calls** to its underlying data source (not
 just a discarded result), and the orchestrator correctly continues an
 investigation after one step fails rather than aborting silently.
 
-What's explicitly NOT verified, stated plainly rather than glossed
-over:
+As of incident #4, `guardrails/injection_screening.py`'s real,
+LLM-based `llm_injection_classifier` has now been run for real,
+against Claude's actual API, and correctly handled all three test
+cases including the hard discussing-vs-attacking distinction — this
+is no longer an open gap.
+
+What's still explicitly NOT verified, stated plainly rather than
+glossed over:
 - The three `mcp_servers/*_server.py` MCP wrapper files — correct code
   against the documented `mcp` SDK API, never executed (no `mcp`
-  package, no network to install it here).
-- `guardrails/injection_screening.py`'s real `llm_injection_classifier`
-  — correct code against Anthropic's documented Messages API, never
-  executed (no `anthropic` package, no API key, no network here).
+  package/network access confirmed against a real MCP client yet).
 - The actual agent *reasoning* (deciding what to investigate given an
   initial alert) — not built at all yet; `agents/orchestrator.py`
   only handles the deterministic mechanics of running a pre-defined
@@ -95,10 +130,9 @@ over:
   is an explicit `NotImplementedError` stub pointing at exactly what
   needs wiring up.
 
-This is a meaningfully larger unverified surface than this portfolio's
-earlier projects at the equivalent stage, and that's an honest,
-direct consequence of choosing the MCP-based architecture — a real,
-current, differentiated design, at the cost of more deferred
-verification than a simpler REST-based tool-calling approach would
-have needed. See docs/architecture.md for the full, itemized breakdown
-and what it would take to close each gap.
+This is still a meaningfully larger unverified surface than this
+portfolio's earlier projects at the equivalent stage — but the single
+most novel, highest-risk piece (does the real LLM classifier actually
+make the distinction its prompt claims to enforce) is now confirmed,
+not assumed. See docs/architecture.md for the full, itemized breakdown
+and what it would take to close the remaining gaps.
