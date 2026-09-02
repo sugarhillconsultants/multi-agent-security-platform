@@ -166,6 +166,36 @@ MCP protocol layer, the import/path setup, and the underlying security
 logic all genuinely work together, across all three servers — not
 verified separately and assumed to compose correctly.
 
+## 6. The actual agent reasoning layer, run for real for the first time — and it behaved exactly as intended
+
+`agents/planner.py` implements the one piece explicitly deferred at
+the end of every prior session: given a raw alert, ask Claude to
+decide which tools to call, using Claude's native tool-use mechanism
+rather than free-text JSON parsing. This can't be covered by the
+automated test suite — Claude's exact tool-selection decisions for a
+given prompt aren't guaranteed identical run to run — so it was
+verified manually instead, the same way the injection classifier was.
+
+Given the alert *"Unusual outbound connection volume detected from
+internal host 10.0.0.42 to external IP 185.220.101.47 over the past
+hour, flagged by the log anomaly classifier with high confidence,"*
+Claude correctly chose to call `query_log_events` (pulling log context
+first, with a well-constructed search query extracting the specific
+host, IP, and timeframe from the alert text) and `query_threat_intel`
+(checking the external IP against known threat activity) — and,
+notably, did **not** jump straight to `query_fusion_data`, the one
+tool gated by classification-level authorization. This matches the
+prompt's explicit instruction to start broad before querying fusion
+data for a specific indicator — real evidence the prompt's guidance
+actually shaped the model's behavior, not a lucky coincidence.
+
+A deliberate security boundary in this design, worth stating
+explicitly: `plan_to_investigation_steps()`'s `extra_kwargs_by_tool`
+parameter exists specifically so the calling code — never Claude —
+injects which session's authorizations a tool call runs under. Claude
+decides WHAT to investigate; it is never in a position to specify
+WHICH clearance level the investigation runs under.
+
 ## What's verified, and what genuinely isn't yet
 
 Every module in `agents/`, `mcp_servers/*_tool_logic.py`, and
