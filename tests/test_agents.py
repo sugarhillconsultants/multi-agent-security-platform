@@ -182,3 +182,38 @@ def test_injection_screening_batch_preserves_flagged_in_audit_trail():
     safe_texts, all_results = screen_documents_batch(docs, mock_classifier)
     assert len(safe_texts) == 1
     assert len(all_results) == 2
+
+
+# --- agents/planner.py ---
+
+def test_planner_converts_tool_use_blocks_to_investigation_steps():
+    from types import SimpleNamespace
+    from agents.planner import plan_to_investigation_steps
+    fake_blocks = [SimpleNamespace(name="query_log_events", input={"query": "failed logins"})]
+    tool_map = {"query_log_events": query_log_events}
+    steps = plan_to_investigation_steps(fake_blocks, tool_map)
+    assert len(steps) == 1
+    assert steps[0].agent_name == "query_log_events"
+    assert steps[0].kwargs == {"query": "failed logins"}
+
+def test_planner_skips_unknown_tool_name_without_crashing():
+    from types import SimpleNamespace
+    from agents.planner import plan_to_investigation_steps
+    fake_blocks = [
+        SimpleNamespace(name="query_log_events", input={"query": "test"}),
+        SimpleNamespace(name="not_a_real_tool", input={}),
+    ]
+    tool_map = {"query_log_events": query_log_events}
+    steps = plan_to_investigation_steps(fake_blocks, tool_map)
+    assert len(steps) == 1
+
+def test_planner_extra_kwargs_injects_session_without_claude_specifying_it():
+    from types import SimpleNamespace
+    from agents.planner import plan_to_investigation_steps
+    def mock_source(query):
+        return []
+    fake_blocks = [SimpleNamespace(name="query_log_events", input={"query": "test"})]
+    tool_map = {"query_log_events": query_log_events}
+    steps = plan_to_investigation_steps(fake_blocks, tool_map, extra_kwargs_by_tool={"query_log_events": {"data_source": mock_source}})
+    assert steps[0].kwargs["data_source"] == mock_source
+    assert steps[0].kwargs["query"] == "test"

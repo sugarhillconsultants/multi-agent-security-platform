@@ -196,6 +196,51 @@ injects which session's authorizations a tool call runs under. Claude
 decides WHAT to investigate; it is never in a position to specify
 WHICH clearance level the investigation runs under.
 
+## 7. Pushing the manual test scripts broke the entire CI run — caught only by actually looking at GitHub Actions, not local testing
+
+`tests/test_real_classifier_manual.py` and `tests/test_real_planner_manual.py`
+were both named to match pytest's default auto-discovery pattern
+(`test_*.py`) simply because that seemed like the natural place for
+them to live, sitting alongside `test_agents.py`. They were never run
+locally through `pytest tests/` — only invoked directly as scripts
+(`python3 tests/test_real_planner_manual.py`), which never triggered
+the problem.
+
+The actual CI workflow runs `pytest tests/ -v`, which auto-discovers
+and attempts to import every `test_*.py` file to look for test
+functions inside it. Both manual scripts executed their real API calls
+at module level — not inside a function — so the mere act of
+importing them for collection purposes triggered an actual attempt to
+call `import anthropic`, which correctly doesn't exist in CI (by
+design — CI should never have API keys or incur real costs). This
+raised `ModuleNotFoundError`, which aborted the entire test run before
+a single one of the 21 legitimately-passing tests could execute —
+`Interrupted: 2 errors during collection`, hiding all real, working
+test results behind what looked like a total CI failure to anyone
+glancing at the Actions tab.
+
+Fixed two ways, deliberately redundant: renamed both files away from
+the `test_*.py`/`*_test.py` pattern entirely
+(`manual_check_real_classifier.py`, `manual_check_real_planner.py`),
+so pytest's default collection never attempts to import them at all;
+and wrapped each file's executable logic in `if __name__ ==
+"__main__":`, so even accidentally importing either file for any
+reason in the future can never trigger a real API call as a side
+effect, independent of whatever it happens to be named. Confirmed the
+fix directly: `pytest tests/ --collect-only` now shows exactly 21
+tests collected with zero errors, and `pytest tests/ -v` shows all 21
+passing.
+
+This is worth stating plainly: this specific failure mode was
+genuinely invisible from every check performed before pushing —
+running the manual scripts directly worked fine, and the automated
+suite passed 21/21 when run directly with `pytest tests/test_agents.py`
+specifically. It only surfaced by looking at the actual GitHub Actions
+log after pushing, which is exactly why this portfolio treats a green
+CI badge as real, independent confirmation rather than a formality —
+this incident is a direct, concrete example of why that distinction
+matters.
+
 ## What's verified, and what genuinely isn't yet
 
 Every module in `agents/`, `mcp_servers/*_tool_logic.py`, and
