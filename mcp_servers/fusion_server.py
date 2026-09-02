@@ -3,13 +3,18 @@ mcp_servers/fusion_server.py
 
 MCP server wrapper around fusion_tool_logic.py's already-verified
 logic. This file is the thin, protocol-specific layer — written
-against the `mcp` Python SDK's documented FastMCP API, but NOT
-executed in this project's development environment, since no `mcp`
-package (and no network to install it) exists there. The actual
-security-critical logic this server exposes is fully tested
-independently in fusion_tool_logic.py (5/5 tests) — this file's job
-is just to expose that already-correct logic over the MCP protocol,
-not to reimplement any of the logic itself.
+against the `mcp` Python SDK's v2 documented `MCPServer` API. Updated
+from the original v1 `FastMCP` API after the SDK's own breaking-change
+migration was discovered mid-verification — see docs/incidents.md #5
+for the full account of what changed and why the fix is this narrow
+(this server uses none of the v2 features — resources, prompts,
+elicitation, custom transport config — that actually changed
+behavior; only the class rename and import path apply here).
+
+The actual security-critical logic this server exposes is fully
+tested independently in fusion_tool_logic.py (5/5 tests) — this file's
+job is just to expose that already-correct logic over the MCP
+protocol, not to reimplement any of the logic itself.
 
 In production, `real_accumulo_data_source` would call Project 6
 (Secure Data Fusion Platform)'s actual Accumulo scan — not
@@ -17,12 +22,16 @@ reimplemented here, since Project 6 already has that logic built,
 tested, and verified against a real cluster.
 """
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
+
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 from agents.session_registry import get_session
 from mcp_servers.fusion_tool_logic import query_fusion_data as _query_fusion_data_logic
 
-mcp_server = FastMCP("fusion-agent")
+mcp_server = MCPServer("fusion-agent")
 
 
 def real_accumulo_data_source(indicator: str, family: str) -> dict | None:

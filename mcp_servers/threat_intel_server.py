@@ -2,16 +2,21 @@
 mcp_servers/threat_intel_server.py
 
 MCP server wrapper around threat_intel_tool_logic.py's already-verified
-logic (2/2 tests). Not executed in this project's dev environment —
-see fusion_server.py's module docstring for the full explanation.
+logic (2/2 tests). Written against the mcp SDK's v2 `MCPServer` API
+(renamed from v1's `FastMCP`) — see fusion_server.py's module docstring
+and docs/incidents.md #5 for the full migration account.
 """
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
+
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 from agents.session_registry import get_session
 from mcp_servers.threat_intel_tool_logic import query_threat_intel as _query_threat_intel_logic
 
-mcp_server = FastMCP("threat-intel-agent")
+mcp_server = MCPServer("threat-intel-agent")
 
 
 def real_rag_data_source(query: str) -> list:

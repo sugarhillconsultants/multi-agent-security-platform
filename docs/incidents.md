@@ -99,6 +99,73 @@ flagged with a specific, accurate reason. The distinction this
 project's test suite could only assert against a mock is now
 confirmed against the real model.
 
+## 5. Attempting to run the MCP servers for the first time: the SDK had undergone a major, undocumented-to-us breaking change
+
+Running `mcp dev mcp_servers/fusion_server.py` for the first time
+failed immediately with `ModuleNotFoundError: No module named
+'mcp.server.fastmcp'`, along with an unusually specific and helpful
+message pointing directly at the SDK's own migration guide. The `mcp`
+package had undergone a major version bump (v1 to v2) at some point
+between when this code was originally written and when it was first
+actually run — `FastMCP` was renamed to `MCPServer`, among many other
+changes covered in the SDK's migration documentation.
+
+Rather than pin back to the deprecated v1 line (`mcp<2`) to make the
+original code work as-is, the three server files were updated to the
+real, current v2 API — consistent with this project's whole reason for
+choosing MCP in the first place (a current, differentiated design, not
+a demonstration of a now-legacy API). Reading the migration guide
+directly rather than guessing revealed the actual fix needed for these
+specific files was narrow: the guide's own "What is unchanged on
+`MCPServer`" section confirms `@mcp.tool()` decorators and `.run()`
+keep their v1 behavior for a simple server like these — none of the
+three files here use resources, prompts, elicitation, or custom
+transport configuration, which is where most of v2's other breaking
+changes actually apply. The fix was exactly two lines per file: the
+import path (`mcp.server.fastmcp` → `mcp.server.mcpserver`) and the
+class name (`FastMCP` → `MCPServer`).
+
+This is worth stating plainly as a category of risk distinct from
+everything else in this incident log: every other unverified-until-run
+piece in this portfolio was unverified because of environment
+limitations (no network, no compiler, no GPU). This one was unverified
+because the *target it was written against had changed out from under
+it* while sitting unexecuted — a real reminder that "correct code
+against a documented API" has a shelf life, and needs to be confirmed
+against current reality, not just assumed to remain valid indefinitely.
+
+**Two more real, narrow issues surfaced getting the Fusion Agent's
+server to actually run, both fixed and then confirmed working:**
+
+- `mcp dev` loads the server file via `importlib.util.module_from_spec()`/
+  `exec_module()` directly on the file path — this does NOT
+  automatically add the project root to `sys.path` the way a normal
+  `python3 script.py` invocation would, so `from agents.session_registry
+  import ...` failed with `ModuleNotFoundError: No module named
+  'agents'`. Fixed by having each server file explicitly insert its own
+  parent directory onto `sys.path` before those imports.
+- `mcp dev` looks for a server object named `mcp`, `server`, or `app`
+  by default; this project's servers all use `mcp_server`. Fixed by
+  invoking with the explicit `file:object` syntax the tool itself
+  suggested (`mcp dev mcp_servers/fusion_server.py:mcp_server`).
+
+**With all of the above fixed, all three MCP servers were successfully
+run for real, end to end, for the first time**: the MCP Inspector
+connected over stdio to each one in turn (`fusion-agent`,
+`log-analysis-agent`, `threat-intel-agent`), correctly reporting each
+server's identity and capabilities. For the Fusion Agent specifically,
+a tool call to `query_fusion_data` was confirmed routed all the way
+through the real MCP protocol layer into the actual, already-tested
+application code — where `agents/session_registry.py`'s fail-closed
+behavior for an unrecognized session correctly fired, raising exactly
+the `KeyError` already proven in
+`tests/test_agents.py::test_session_registry_unknown_session_fails_closed`,
+this time via a genuine MCP client round-trip rather than a direct
+Python function call. This is real, complete confirmation that the
+MCP protocol layer, the import/path setup, and the underlying security
+logic all genuinely work together, across all three servers — not
+verified separately and assumed to compose correctly.
+
 ## What's verified, and what genuinely isn't yet
 
 Every module in `agents/`, `mcp_servers/*_tool_logic.py`, and
@@ -118,9 +185,14 @@ is no longer an open gap.
 
 What's still explicitly NOT verified, stated plainly rather than
 glossed over:
-- The three `mcp_servers/*_server.py` MCP wrapper files — correct code
-  against the documented `mcp` SDK API, never executed (no `mcp`
-  package/network access confirmed against a real MCP client yet).
+- The actual "happy path" through a real MCP tool call — a registered
+  session correctly reaching one of the `real_*_data_source` functions'
+  intentional `NotImplementedError` stubs — hasn't been separately
+  exercised via the Inspector; only the fail-closed unknown-session
+  path has been confirmed end to end, and only for the Fusion Agent
+  specifically (though there's no structural reason to expect the
+  other two would behave differently, given they share the identical
+  authorization-check pattern).
 - The actual agent *reasoning* (deciding what to investigate given an
   initial alert) — not built at all yet; `agents/orchestrator.py`
   only handles the deterministic mechanics of running a pre-defined
