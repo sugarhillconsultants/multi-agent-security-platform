@@ -207,17 +207,17 @@ locally through `pytest tests/` — only invoked directly as scripts
 the problem.
 
 The actual CI workflow runs `pytest tests/ -v`, which auto-discovers
-and attempts to import every `test_*.py` file to look for test
-functions inside it. Both manual scripts executed their real API calls
+and attempts to **import** every `test_*.py` file to look for test
+functions inside it. Both manual scripts execute their real API calls
 at module level — not inside a function — so the mere act of
 importing them for collection purposes triggered an actual attempt to
 call `import anthropic`, which correctly doesn't exist in CI (by
 design — CI should never have API keys or incur real costs). This
-raised `ModuleNotFoundError`, which aborted the entire test run before
-a single one of the 21 legitimately-passing tests could execute —
-`Interrupted: 2 errors during collection`, hiding all real, working
-test results behind what looked like a total CI failure to anyone
-glancing at the Actions tab.
+raised `ModuleNotFoundError`, which aborted the **entire** test run
+before a single one of the 21 legitimately-passing tests could
+execute — `Interrupted: 2 errors during collection`, hiding all real,
+working test results behind what looked like a total CI failure to
+anyone glancing at the Actions tab.
 
 Fixed two ways, deliberately redundant: renamed both files away from
 the `test_*.py`/`*_test.py` pattern entirely
@@ -241,16 +241,102 @@ CI badge as real, independent confirmation rather than a formality —
 this incident is a direct, concrete example of why that distinction
 matters.
 
+## 8. Wiring up live Project 1 integration revealed the original tool design assumed a capability that never existed
+
+`query_log_events`'s original design assumed Project 1 exposed a
+"search my past events for X" endpoint — a reasonable-sounding
+assumption when this project was first scaffolded, never actually
+checked against Project 1's real, current API surface.
+
+Fetching Project 1's live `/openapi.json` directly (rather than
+working from memory of what that project looked like several sessions
+ago) confirmed no such endpoint exists at all. The real API supports
+exactly two things: submitting a specific piece of log text for live
+classification (`POST /events`, taking `LogEventIn`: `text`/`source`,
+returning `LogEventOut`: `event_id`/`text`/`predicted_label`/
+`confidence`), and looking up one already-classified event by its
+numeric ID (`GET /events/{event_id}`). There is no keyword search, no
+listing, no filtering by time range.
+
+Rather than force a mismatched design onto the real system, the tool
+was renamed throughout — `query_log_events` became `classify_log_text`
+— in `mcp_servers/log_analysis_tool_logic.py`,
+`mcp_servers/log_analysis_server.py`, and `agents/planner.py`'s tool
+schema, with the parameter shape changed from a free-text `query`
+string to the real `text`/`source` fields Project 1's API actually
+expects. This is arguably a better design for the actual use case
+too: given a security alert, submitting the specific suspicious log
+content for classification is a more direct question than searching
+an index that was never built.
+
+This is worth stating as a pattern distinct from every other finding
+in this log: every previous incident was caught by attempting to
+*run* something and hitting a real error. This one was caught by
+*checking a live system's actual current interface* before writing
+integration code against it — a different, earlier form of the same
+underlying discipline (verify against reality, not assumption), applied
+before any code was written rather than after it failed.
+
+## 9. Confirming Project 1's live integration for real — plus a genuine, honest observation about the model's own output
+
+Getting `classify_log_text` to actually run against Project 1's real
+deployment required recovering a genuinely lost demo credential first:
+neither of us remembered the username, and the GitHub repository
+secrets (`AZURE_CLIENT_ID`, `HF_TOKEN`, etc.) turned out to be
+deployment infrastructure credentials, not the application's own user
+database. Found by reading Project 1's actual `app/auth.py` directly:
+username `analyst`, with the password read from a `DEMO_PASSWORD`
+environment variable that was never actually set on the live
+deployment — confirmed via `az containerapp show`, meaning the real,
+live password is genuinely the code's own fallback default,
+`changeme123`. Verified directly with a standalone `curl` call before
+writing any Python against it, matching this whole session's pattern
+of confirming reality before building on top of it.
+
+**A separate, real friction point along the way**: two file edits
+(`log_analysis_tool_logic.py`'s rename, `log_analysis_server.py`'s
+real implementation) silently failed to persist — pasted heredoc
+commands that appeared to run produced no error, but the files'
+modification timestamps (`ls -la`) showed they were untouched from a
+session two days earlier. Root cause never fully identified (possibly
+the heredoc got bundled into a prior multi-line paste and only
+partially executed), but caught immediately by checking `ls -la`
+before assuming a write succeeded, rather than trusting that a
+paste without a visible error meant it worked — the same "verify, don't
+assume" discipline applied to a shell-command mechanic this time,
+not application logic.
+
+**With both fixed, `python3 tests/manual_check_real_log_platform.py`
+succeeded completely against the real, live deployment**: real OAuth2
+authentication, a real ~15-second cold start survived (Project 1's
+Container App is deliberately scaled to zero), and a real response
+from the actual deployed classifier: `{'event_id': 1, 'predicted_label':
+'normal', 'confidence': 0.54}`.
+
+Worth stating honestly rather than glossing over: that confidence
+score is low — barely above chance — for input that reads like a
+textbook brute-force pattern ("Failed login attempt x47 ... within 60
+seconds"). This isn't a flaw in today's integration work; the request/
+response plumbing is fully, correctly confirmed. It's a separate,
+genuine observation about the underlying model's actual behavior on
+this specific input, worth recording plainly as a real result rather
+than either quietly omitting it or treating a successful HTTP
+round-trip as if it also validated the model's judgment — those are
+two different claims, and only the first one was being tested today.
+
 ## What's verified, and what genuinely isn't yet
 
 Every module in `agents/`, `mcp_servers/*_tool_logic.py`, and
 `guardrails/`'s integration logic runs with zero external dependencies
 — no network, no LLM, no MCP SDK, no live Project 1/5/6 infrastructure.
-All 18 tests pass, including two genuinely load-bearing properties
-proven with real evidence rather than assumed: a denied field or
-document produces **zero calls** to its underlying data source (not
-just a discarded result), and the orchestrator correctly continues an
-investigation after one step fails rather than aborting silently.
+All 21 tests pass (18 original + 3 covering the planner's deterministic
+tool_use-to-InvestigationStep conversion, added alongside incident #6),
+including three genuinely load-bearing properties proven with real
+evidence rather than assumed: a denied field or document produces
+**zero calls** to its underlying data source (not just a discarded
+result), the orchestrator correctly continues an investigation after
+one step fails rather than aborting silently, and an unknown tool name
+from the planner is skipped rather than crashing the whole plan.
 
 As of incident #4, `guardrails/injection_screening.py`'s real,
 LLM-based `llm_injection_classifier` has now been run for real,
@@ -258,16 +344,39 @@ against Claude's actual API, and correctly handled all three test
 cases including the hard discussing-vs-attacking distinction — this
 is no longer an open gap.
 
+As of incident #6, `agents/planner.py`'s real agent reasoning has now
+also been run for real, against Claude's actual API, and produced a
+sensible, correctly-ordered investigation plan for a realistic alert —
+this is no longer an open gap either. What remains unverified about
+this layer specifically: only one alert scenario has been tried
+manually; broader confidence in the planner's tool-selection judgment
+across a wider range of alerts would need more manual runs, or a
+proper evaluation harness, neither of which exists yet.
+
+As of incident #9, `mcp_servers/log_analysis_server.py`'s
+`real_log_platform_data_source` is no longer a stub — it has been run
+for real against Project 1's actual live deployment, with a real
+authenticated request/response round-trip confirmed end to end. This
+is the first of the three original `NotImplementedError` placeholders
+to be genuinely closed.
+
 What's still explicitly NOT verified, stated plainly rather than
 glossed over:
+- Project 5 (Threat Intel) and Project 6 (Fusion) still have their
+  original `NotImplementedError` stubs in place — Project 5 needs a
+  real prerequisite fix (per-document visibility metadata added to its
+  RAG schema) before wiring it up meaningfully; Project 6 needs its
+  Azure VM running again plus new infrastructure to read from Accumulo
+  from Python at all (no reliable current Python client exists for
+  Accumulo 2.x, the same real gap that led to building a separate Java
+  writer program in that project — reading has the identical problem).
 - The actual "happy path" through a real MCP tool call — a registered
-  session correctly reaching one of the `real_*_data_source` functions'
-  intentional `NotImplementedError` stubs — hasn't been separately
-  exercised via the Inspector; only the fail-closed unknown-session
-  path has been confirmed end to end, and only for the Fusion Agent
-  specifically (though there's no structural reason to expect the
-  other two would behave differently, given they share the identical
-  authorization-check pattern).
+  session correctly reaching a real data source through the MCP
+  protocol layer itself, not just via direct Python function calls —
+  hasn't been separately re-exercised via the Inspector since the
+  Project 1 integration was completed; only the fail-closed
+  unknown-session path has been confirmed that way so far, and only
+  for the Fusion Agent specifically.
 - The actual agent *reasoning* (deciding what to investigate given an
   initial alert) — not built at all yet; `agents/orchestrator.py`
   only handles the deterministic mechanics of running a pre-defined

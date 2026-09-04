@@ -25,18 +25,28 @@ same way guardrails/injection_screening.py's real classifier was.
 
 import os
 
+# The same three tools already exposed as MCP servers in mcp_servers/ —
+# described here as Claude tool-use schemas rather than MCP tool
+# definitions, since the planner calls the LLM directly rather than
+# going through the MCP protocol layer itself.
 INVESTIGATION_TOOLS = [
     {
-        "name": "query_log_events",
+        "name": "classify_log_text",
         "description": (
-            "Search Project 1's log anomaly classifier for events matching "
-            "a query. Use this first for any alert that references specific "
-            "log activity, IPs, or timeframes."
+            "Submit a SPECIFIC piece of suspicious log text to Project 1's "
+            "real classifier and get back its actual prediction "
+            "(predicted_label, confidence). Project 1 does not support "
+            "searching historical events by keyword — only classifying a "
+            "specific piece of text you provide. Use this for any alert "
+            "that includes or references specific log content."
         ),
         "input_schema": {
             "type": "object",
-            "properties": {"query": {"type": "string", "description": "Search terms describing what to look for in the logs"}},
-            "required": ["query"],
+            "properties": {
+                "text": {"type": "string", "description": "The specific log text to classify"},
+                "source": {"type": "string", "description": "The originating system this log text came from"},
+            },
+            "required": ["text", "source"],
         },
     },
     {
@@ -133,7 +143,7 @@ def plan_to_investigation_steps(tool_use_blocks, tool_name_to_function: dict, ex
     for block in tool_use_blocks:
         tool_fn = tool_name_to_function.get(block.name)
         if tool_fn is None:
-            continue
+            continue  # Claude named a tool that doesn't exist in our mapping — skip, don't crash the whole plan
         kwargs = dict(block.input)
         kwargs.update(extra_kwargs_by_tool.get(block.name, {}))
         steps.append(InvestigationStep(agent_name=block.name, tool_fn=tool_fn, kwargs=kwargs))

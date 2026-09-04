@@ -16,7 +16,7 @@ from agents.authorization import SessionContext, ToolCallRequest, authorize_tool
 from agents.session_registry import register_session, get_session, clear_all_sessions
 from agents.orchestrator import InvestigationStep, run_investigation
 from mcp_servers.fusion_tool_logic import query_fusion_data
-from mcp_servers.log_analysis_tool_logic import query_log_events
+from mcp_servers.log_analysis_tool_logic import classify_log_text
 from mcp_servers.threat_intel_tool_logic import query_threat_intel
 from guardrails.injection_screening import screen_document, screen_documents_batch
 
@@ -103,20 +103,20 @@ def test_fusion_unknown_family_denies_by_default():
 # --- mcp_servers/log_analysis_tool_logic.py ---
 
 def test_log_analysis_authorized_with_u_clearance():
-    def mock_source(query):
-        return [{"event_id": 1}]
+    def mock_source(text, source):
+        return {"event_id": 1, "text": text, "predicted_label": "normal", "confidence": 0.5}
     session = SessionContext(session_id="l1", held_authorizations={"U"})
-    result = query_log_events(session, "test query", mock_source)
+    result = classify_log_text(session, "test text", "test-source", mock_source)
     assert result.denied is False
-    assert len(result.authorized_events) == 1
+    assert result.classification["event_id"] == 1
 
 def test_log_analysis_denied_with_no_clearance_at_all():
     call_count = [0]
-    def mock_source(query):
+    def mock_source(text, source):
         call_count[0] += 1
-        return [{"event_id": 1}]
+        return {"event_id": 1}
     session = SessionContext(session_id="l2", held_authorizations=set())
-    result = query_log_events(session, "test query", mock_source)
+    result = classify_log_text(session, "test text", "test-source", mock_source)
     assert result.denied is True
     assert call_count[0] == 0
 
@@ -137,7 +137,7 @@ def test_threat_intel_per_document_authorization():
 def test_orchestrator_runs_multiple_real_tools_in_sequence():
     session = SessionContext(session_id="o1", held_authorizations={"U", "S", "REL_TO_FVEY"})
     steps = [
-        InvestigationStep("LogAnalysisAgent", query_log_events, {"query": "q", "data_source": lambda q: [{"id": 1}]}),
+        InvestigationStep("LogAnalysisAgent", classify_log_text, {"text": "t", "source": "s", "data_source": lambda t, s: {"id": 1}}),
         InvestigationStep("ThreatIntelAgent", query_threat_intel, {"query": "q", "data_source": lambda q: [("doc", "U")]}),
     ]
     trace = run_investigation(session, steps)
@@ -146,10 +146,10 @@ def test_orchestrator_runs_multiple_real_tools_in_sequence():
 
 def test_orchestrator_continues_after_a_step_fails():
     session = SessionContext(session_id="o2", held_authorizations={"U"})
-    def broken_source(q):
+    def broken_source(text, source):
         raise RuntimeError("simulated outage")
     steps = [
-        InvestigationStep("LogAnalysisAgent", query_log_events, {"query": "q", "data_source": broken_source}),
+        InvestigationStep("LogAnalysisAgent", classify_log_text, {"text": "t", "source": "s", "data_source": broken_source}),
         InvestigationStep("ThreatIntelAgent", query_threat_intel, {"query": "q", "data_source": lambda q: [("doc", "U")]}),
     ]
     trace = run_investigation(session, steps)
@@ -189,31 +189,31 @@ def test_injection_screening_batch_preserves_flagged_in_audit_trail():
 def test_planner_converts_tool_use_blocks_to_investigation_steps():
     from types import SimpleNamespace
     from agents.planner import plan_to_investigation_steps
-    fake_blocks = [SimpleNamespace(name="query_log_events", input={"query": "failed logins"})]
-    tool_map = {"query_log_events": query_log_events}
+    fake_blocks = [SimpleNamespace(name="classify_log_text", input={"text": "failed logins", "source": "auth"})]
+    tool_map = {"classify_log_text": classify_log_text}
     steps = plan_to_investigation_steps(fake_blocks, tool_map)
     assert len(steps) == 1
-    assert steps[0].agent_name == "query_log_events"
-    assert steps[0].kwargs == {"query": "failed logins"}
+    assert steps[0].agent_name == "classify_log_text"
+    assert steps[0].kwargs == {"text": "failed logins", "source": "auth"}
 
 def test_planner_skips_unknown_tool_name_without_crashing():
     from types import SimpleNamespace
     from agents.planner import plan_to_investigation_steps
     fake_blocks = [
-        SimpleNamespace(name="query_log_events", input={"query": "test"}),
+        SimpleNamespace(name="classify_log_text", input={"text": "test", "source": "test"}),
         SimpleNamespace(name="not_a_real_tool", input={}),
     ]
-    tool_map = {"query_log_events": query_log_events}
+    tool_map = {"classify_log_text": classify_log_text}
     steps = plan_to_investigation_steps(fake_blocks, tool_map)
     assert len(steps) == 1
 
 def test_planner_extra_kwargs_injects_session_without_claude_specifying_it():
     from types import SimpleNamespace
     from agents.planner import plan_to_investigation_steps
-    def mock_source(query):
+    def mock_source(text, source):
         return []
-    fake_blocks = [SimpleNamespace(name="query_log_events", input={"query": "test"})]
-    tool_map = {"query_log_events": query_log_events}
-    steps = plan_to_investigation_steps(fake_blocks, tool_map, extra_kwargs_by_tool={"query_log_events": {"data_source": mock_source}})
+    fake_blocks = [SimpleNamespace(name="classify_log_text", input={"text": "test", "source": "test"})]
+    tool_map = {"classify_log_text": classify_log_text}
+    steps = plan_to_investigation_steps(fake_blocks, tool_map, extra_kwargs_by_tool={"classify_log_text": {"data_source": mock_source}})
     assert steps[0].kwargs["data_source"] == mock_source
-    assert steps[0].kwargs["query"] == "test"
+    assert steps[0].kwargs["text"] == "test"
