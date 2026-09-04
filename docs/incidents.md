@@ -324,6 +324,53 @@ than either quietly omitting it or treating a successful HTTP
 round-trip as if it also validated the model's judgment — those are
 two different claims, and only the first one was being tested today.
 
+## 10. Adding real visibility classification to Project 5, and proving the security boundary end to end with live data
+
+Checking Project 5's actual live `/openapi.json` confirmed the gap
+this project's docs had already flagged was still genuinely there:
+`RetrievedChunk` had only `chunk_id`/`text`/`score` — no classification
+field anywhere, and `IngestRequest` had nowhere to attach one either.
+
+Rather than build a full per-user authorization system into Project 5
+itself (which has only ever had one hardcoded demo user, no clearance
+concept at all), the scoped, honest choice: Project 5 becomes a real,
+labeled data source — a `visibility` field added to `IngestRequest`
+(default `"U"`) and `RetrievedChunk` (now required), with the actual
+label tracked per-chunk and returned on every query. Enforcement stays
+where it already correctly lives: this project's own
+`agents/authorization.py`, exactly mirroring how Project 6's Fusion
+Agent integration already works — the source system labels, the
+calling system decides who's cleared to see what.
+
+Verified in stages, each confirmed before moving to the next: the
+change didn't break Project 5's own 20 existing tests (none construct
+a `RetrievedChunk` directly, so the new required field had zero
+blast radius); the automated deploy pipeline (test → then
+automatically push to the live Hugging Face Space, confirmed by
+reading Project 5's own `.github/workflows/test.yml` directly rather
+than assuming how deployment worked) ran successfully; and the live,
+deployed `/openapi.json` was fetched again afterward to confirm
+`visibility` genuinely appears as a required field on the running
+system, not just in the pushed source.
+
+**Then the actual proof**: three real documents ingested live, at
+`U`, `S`, and `TS`, followed by a real query against all three,
+correctly returning each with its exact label and real,
+model-generated relevance scores (the classified attribution and
+HUMINT documents scored far higher than the unrelated public CVE
+advisory — a substantive, genuine semantic distinction, not
+arbitrary). Then, running `manual_check_real_threat_intel.py` against
+this live data at three different session clearance levels: a
+`U`-only session correctly saw exactly 1 of 3 documents; a `U`+`S`
+session correctly saw exactly 2; a fully-cleared session correctly saw
+all 3 — precise, graduated enforcement proven against real,
+live infrastructure, not a mock.
+
+This closes the second of the three original `NotImplementedError`
+stubs with full, live, end-to-end confirmation — only Project 6
+(Fusion/Accumulo) remains, which needs the Azure VM running again plus
+new infrastructure to read from Accumulo in Python at all.
+
 ## What's verified, and what genuinely isn't yet
 
 Every module in `agents/`, `mcp_servers/*_tool_logic.py`, and
@@ -360,16 +407,25 @@ authenticated request/response round-trip confirmed end to end. This
 is the first of the three original `NotImplementedError` placeholders
 to be genuinely closed.
 
+As of incident #10, `mcp_servers/threat_intel_server.py`'s
+`real_rag_data_source` is also no longer a stub — Project 5 itself was
+extended with real per-document visibility classification, redeployed
+live, and the full security boundary was proven end to end against
+that live data: a `U`-only session, a `U`+`S` session, and a
+fully-cleared session each correctly saw exactly the right subset of
+three real, live-ingested documents. This is the second of the three
+original stubs genuinely closed.
+
 What's still explicitly NOT verified, stated plainly rather than
 glossed over:
-- Project 5 (Threat Intel) and Project 6 (Fusion) still have their
-  original `NotImplementedError` stubs in place — Project 5 needs a
-  real prerequisite fix (per-document visibility metadata added to its
-  RAG schema) before wiring it up meaningfully; Project 6 needs its
-  Azure VM running again plus new infrastructure to read from Accumulo
-  from Python at all (no reliable current Python client exists for
-  Accumulo 2.x, the same real gap that led to building a separate Java
-  writer program in that project — reading has the identical problem).
+- Project 6 (Fusion) still has its original `NotImplementedError` stub
+  in place — it needs its Azure VM running again, plus genuinely new
+  infrastructure to read from Accumulo in Python at all (no reliable
+  current Python client exists for Accumulo 2.x, the same real gap
+  that led to building a separate Java writer program in that project
+  — reading has the identical problem, and would need either a Java
+  reader bridge, Accumulo's Thrift proxy service, or a small REST
+  wrapper, none of which currently exist).
 - The actual "happy path" through a real MCP tool call — a registered
   session correctly reaching a real data source through the MCP
   protocol layer itself, not just via direct Python function calls —
