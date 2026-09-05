@@ -371,6 +371,70 @@ stubs with full, live, end-to-end confirmation — only Project 6
 (Fusion/Accumulo) remains, which needs the Azure VM running again plus
 new infrastructure to read from Accumulo in Python at all.
 
+## 11. Closing the third and final stub: a Java reader, real per-field authorization, and a genuine ambiguity resolved rather than glossed over
+
+Project 6's integration was always going to be the hardest of the
+three — no reliable Python client exists for Accumulo 2.x, the same
+gap that led to building a separate Java writer program in that
+project. The read-side counterpart, `AccumuloReader.java`, was
+written using the same confirmed-working `AccumuloClient` pattern as
+the writer, but using a `Scanner` instead of a `BatchWriter`, and
+compiled cleanly on the very first real attempt — no fixes needed at
+all, a genuinely unusual result given every other piece of Java in
+this whole portfolio needed at least one real correction on first
+compile.
+
+A deliberate design choice worth restating: this reader implements no
+access-control logic itself. By the time it's invoked,
+`agents/authorization.py` has already decided — per field, before
+dispatch — that the request is authorized. The reader's only job is
+fetching already-cleared data using a full-access service credential,
+exactly mirroring how `AccumuloBulkWriter.java` never needed to
+re-implement authorization either.
+
+**Running the actual end-to-end proof** required getting Project 7's
+authorization code running on the VM itself — genuinely a different
+machine than every other manual test in this incident log, since this
+integration's `real_accumulo_data_source` needs the `accumulo` CLI's
+own classpath (`accumulo classpath`), which only exists inside that
+specific Docker container. Rather than transfer a whole zip archive (a
+real friction point in an earlier attempt this session), the four
+needed files were recreated directly via heredoc on the VM, the same
+proven-reliable method used for `AccumuloReader.java` itself,
+verifying each file's timestamp and size before moving to the next
+rather than assuming a paste succeeded.
+
+**The proof itself, run against the real, live `cti_fusion` table**:
+a `U`-only session correctly received exactly `sensor` and
+`enrichment`, denied `attribution` and `humint`. A session holding
+`U`, `S`, and `REL_TO_FVEY` correctly gained real attribution data
+(`APT-style-cluster-A`, confidence `high`) while `humint` remained
+denied. A fully-cleared session correctly saw everything available.
+
+**A genuine ambiguity surfaced and was resolved properly, not
+glossed over**: the fully-cleared session's result showed `humint`
+appearing in neither the authorized nor denied list for the specific
+indicator tested — worth pausing on rather than assuming success,
+since a silently-missing field could mean either "correctly nothing to
+show" or a real bug. Verified directly against a different indicator
+already known (from much earlier in this project) to carry real
+HUMINT data, which correctly returned it in full
+(`corroborating_report: 'Source-derived corroboration, report ref
+R3783'`). This confirmed the original result was correct all along —
+the first indicator tested simply never had HUMINT-level data in the
+underlying synthetic dataset — not a defect in the authorization
+logic or the reader. The instinct to verify an ambiguous-looking
+result against independent evidence, rather than either declare
+victory or panic, is the same discipline that resolved the
+`root`-vs-restricted-user ambiguity when this project's core security
+thesis was first proven, months earlier.
+
+**This closes the third and final of the three original
+`NotImplementedError` stubs.** All three of this project's
+integrations — Log Analysis, Threat Intel, and Fusion — are now
+verified end to end against real, live, deployed infrastructure, not
+mocks.
+
 ## What's verified, and what genuinely isn't yet
 
 Every module in `agents/`, `mcp_servers/*_tool_logic.py`, and
@@ -416,35 +480,47 @@ fully-cleared session each correctly saw exactly the right subset of
 three real, live-ingested documents. This is the second of the three
 original stubs genuinely closed.
 
+As of incident #11, `mcp_servers/fusion_server.py`'s
+`real_accumulo_data_source` is also no longer a stub —
+`AccumuloReader.java` was built, compiled cleanly on the first real
+attempt, and the full authorization boundary was proven end to end
+against the real, live `cti_fusion` table across three distinct
+clearance levels, with a genuine ambiguous-looking result correctly
+investigated and resolved rather than assumed. **This closes the
+third and final of the three original `NotImplementedError` stubs —
+all three integrations (Log Analysis, Threat Intel, Fusion) are now
+verified end to end against real, live, deployed infrastructure.**
+
 What's still explicitly NOT verified, stated plainly rather than
 glossed over:
-- Project 6 (Fusion) still has its original `NotImplementedError` stub
-  in place — it needs its Azure VM running again, plus genuinely new
-  infrastructure to read from Accumulo in Python at all (no reliable
-  current Python client exists for Accumulo 2.x, the same real gap
-  that led to building a separate Java writer program in that project
-  — reading has the identical problem, and would need either a Java
-  reader bridge, Accumulo's Thrift proxy service, or a small REST
-  wrapper, none of which currently exist).
-- The actual "happy path" through a real MCP tool call — a registered
-  session correctly reaching a real data source through the MCP
-  protocol layer itself, not just via direct Python function calls —
-  hasn't been separately re-exercised via the Inspector since the
-  Project 1 integration was completed; only the fail-closed
-  unknown-session path has been confirmed that way so far, and only
-  for the Fusion Agent specifically.
+- The actual "happy path" through a real MCP tool call for the Fusion
+  and Threat Intel agents specifically — the fail-closed
+  unknown-session path was confirmed via the MCP Inspector for the
+  Fusion Agent early on (incident #5), but the now-real data sources
+  built in incidents #9-#11 haven't been separately re-exercised
+  through the actual MCP protocol layer itself, only via direct Python
+  function calls. The underlying logic is identical either way, but
+  the protocol round-trip specifically hasn't been re-confirmed since
+  these real integrations were completed.
 - The actual agent *reasoning* (deciding what to investigate given an
-  initial alert) — not built at all yet; `agents/orchestrator.py`
-  only handles the deterministic mechanics of running a pre-defined
-  plan, not generating one.
-- Live integration with Projects 1, 5, and 6's real deployed
-  endpoints — every `real_*_data_source` function in `mcp_servers/`
-  is an explicit `NotImplementedError` stub pointing at exactly what
-  needs wiring up.
+  initial alert) has only been tried manually once (incident #6);
+  broader confidence in the planner's tool-selection judgment across a
+  wider range of alerts, and its behavior when actually wired end to
+  end with the now-real tool integrations, would need further manual
+  runs or a proper evaluation harness, neither of which exists yet.
+- `mcp_servers/fusion_server.py`'s real data source has a genuine
+  runtime constraint the other two integrations don't share: it can
+  only run from inside the `accumulo` Docker container itself (where
+  the `accumulo` CLI and its classpath exist), not from a general-
+  purpose machine — meaning a real production deployment of this
+  agent specifically needs to account for that placement, not just
+  treat it as an interchangeable service like the other two.
 
-This is still a meaningfully larger unverified surface than this
-portfolio's earlier projects at the equivalent stage — but the single
-most novel, highest-risk piece (does the real LLM classifier actually
-make the distinction its prompt claims to enforce) is now confirmed,
-not assumed. See docs/architecture.md for the full, itemized breakdown
-and what it would take to close the remaining gaps.
+This project's unverified surface has narrowed substantially since
+incident #5's original assessment — all three original tool
+integrations are now proven against real infrastructure, and the
+single most novel, highest-risk piece from that earlier assessment
+(does the real LLM classifier actually make the distinction its
+prompt claims to enforce) is also confirmed, not assumed. See
+docs/architecture.md for the full, itemized breakdown and what it
+would take to close the remaining gaps.
