@@ -32,25 +32,45 @@ that actually matters —
 confirms a denied request produces **zero calls** to the underlying
 data source, not just a discarded result.
 
-## Status: core authorization/orchestration logic fully verified — MCP and LLM layers correct but unexecuted
+## Status: fully verified end to end — all three tool integrations, the real LLM classifier, the real agent planner, and all three MCP servers confirmed against live infrastructure
 
 Every module in `agents/`, `mcp_servers/*_tool_logic.py`, and
 `guardrails/`'s integration logic runs with zero external dependencies
-— no network, no LLM, no MCP SDK. All 18 tests pass, including a
-real bug caught and fixed before ever being presented (see
-[`docs/incidents.md`](docs/incidents.md) #1) and a genuine edge case
-(a session with zero authorizations, not even the lowest tier, must be
-denied) found specifically by writing the test, not planned for in
-advance (#2).
+— no network, no LLM, no MCP SDK required for the 21-test core suite,
+which includes a real bug caught and fixed before ever being presented
+(see [`docs/incidents.md`](docs/incidents.md) #1) and a genuine edge
+case (a session with zero authorizations, not even the lowest tier,
+must be denied) found specifically by writing the test, not planned
+for in advance (#2).
 
-The three MCP server wrappers and the real LLM-based injection
-classifier are correct code against each system's documented API, but
-have **not been executed** — no `mcp` or `anthropic` package, no
-network, no API key exist in this project's development environment.
-This is a meaningfully larger unverified surface than this portfolio's
-other projects had at the equivalent stage, an honest, direct
-consequence of choosing the more current, more differentiated
-MCP-based design. Full breakdown: [`docs/architecture.md`](docs/architecture.md).
+Beyond that core suite, every piece originally flagged as "correct but
+unexecuted" has since been run for real: the LLM-based injection
+classifier against Claude's actual API, correctly distinguishing
+genuine injection attempts from content merely discussing them (#4);
+the agent planner, producing a sensible, correctly-ordered
+investigation plan for a real alert (#6); and all three MCP servers,
+confirmed working through a real MCP Inspector client, including the
+fail-closed security behavior firing correctly through a genuine
+protocol round-trip (#5). All three tool integrations — Log Analysis
+(Project 1), Threat Intel (Project 5), and Fusion (Project 6) — are
+verified end to end against real, live, deployed infrastructure,
+including a live security boundary proven across separate clearance
+levels for each of Projects 5 and 6 (#9, #10, #11).
+
+Full breakdown of what's verified and what remains open:
+[`docs/architecture.md`](docs/architecture.md).
+
+## Related: AI Red-Teaming / Adversarial AI Testing Platform
+
+This project's own defenses — the injection classifier and the agent
+planner — have been systematically attacked by a dedicated companion
+project, [ai-redteam-platform](https://github.com/sugarhillconsultants/ai-redteam-platform),
+using Microsoft's real PyRIT framework across three escalating tiers.
+It found and reported a genuine planner-level vulnerability (indirect
+injection via alert content manipulating tool selection toward
+sensitive data), which this project's authorization layer fully
+contained — real evidence that the defense-in-depth design holds under
+active adversarial pressure, not just in isolated tests.
 
 ## What's actually in this repo
 
