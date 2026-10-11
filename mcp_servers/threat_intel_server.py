@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 from agents.session_registry import get_session
 from mcp_servers.threat_intel_tool_logic import query_threat_intel as _query_threat_intel_logic
+from guardrails.injection_screening import llm_injection_classifier
 
 mcp_server = MCPServer("threat-intel-agent")
 
@@ -93,12 +94,18 @@ def query_threat_intel(query: str, session_id: str) -> dict:
     with per-document authorization checked before each document is
     included in the result."""
     session = get_session(session_id)
-    result = _query_threat_intel_logic(session, query, real_rag_data_source)
+    # Retrieved text is screened for prompt injection before it is returned
+    # to any reasoning step. On by default; set INJECTION_SCREEN=off only
+    # for local runs without an API key. If the classifier fails, the
+    # document is excluded (fail closed), not passed through.
+    classifier = None if os.environ.get("INJECTION_SCREEN", "on").lower() == "off" else llm_injection_classifier
+    result = _query_threat_intel_logic(session, query, real_rag_data_source, classifier)
 
     return {
         "query": result.query,
         "authorized_documents": result.authorized_documents,
         "denied_documents": result.denied_documents,
+        "flagged_documents": result.flagged_documents,
     }
 
 

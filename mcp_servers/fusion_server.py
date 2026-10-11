@@ -32,6 +32,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 from agents.session_registry import get_session
 from mcp_servers.fusion_tool_logic import query_fusion_data as _query_fusion_data_logic
+from mcp_servers.fusion_tool_logic import build_reader_command
 
 mcp_server = MCPServer("fusion-agent")
 
@@ -51,12 +52,17 @@ def real_accumulo_data_source(indicator: str, family: str) -> dict:
     if not password:
         raise RuntimeError("ACCUMULO_ROOT_PASSWORD must be set to query the real Accumulo cluster.")
 
-    cmd = (
-        f'java -cp "$(accumulo classpath):{reader_dir}" AccumuloReader '
-        f'"{indicator}" "{family}" "{table_name}" "{instance_name}" "{zookeepers}" "{password}"'
-    )
-
-    result = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, timeout=30)
+    # Resolve the Accumulo classpath without a shell, then build the
+    # reader command as an argument list (indicator and family are
+    # validated inside build_reader_command). The password goes to the
+    # child through its environment, not the command line.
+    cp = subprocess.run(["accumulo", "classpath"], capture_output=True, text=True, timeout=30)
+    if cp.returncode != 0:
+        raise RuntimeError(f"accumulo classpath failed (exit {cp.returncode}): {cp.stderr}")
+    cmd = build_reader_command(indicator, family, cp.stdout.strip(), reader_dir,
+                               table_name, instance_name, zookeepers)
+    child_env = dict(os.environ, ACCUMULO_ROOT_PASSWORD=password)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=child_env)
 
     if result.returncode != 0:
         raise RuntimeError(f"AccumuloReader failed (exit {result.returncode}): {result.stderr}")

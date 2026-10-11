@@ -65,7 +65,7 @@ what's verified versus deferred.
 | `guardrails/injection_screening.py` (integration logic) | **Yes** — 3 tests, including discussing-vs-being-an-attack |
 | `mcp_servers/*_server.py` (MCP protocol wrapper) | Correct code against documented API — **not executed**, no `mcp` package/network here |
 | `guardrails/injection_screening.py`'s `llm_injection_classifier` | Correct code against documented Anthropic API — **not executed**, no `anthropic` package/API key/network here |
-| Real integration with Projects 1/5/6's live endpoints | **Not implemented** — explicit `NotImplementedError` stubs naming exactly what to wire up |
+| Real integration with Projects 1/5/6's live endpoints | **Implemented and verified live** — see incidents #8–#11 |
 | Actual agent reasoning (deciding what to investigate) | **Not built at all** — the orchestrator currently runs a pre-defined plan, doesn't generate one |
 
 ## What it would take to close the remaining gaps

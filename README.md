@@ -26,7 +26,7 @@ session's held clearance — reusing Project 6's own already-proven
 visibility model, not a parallel, potentially-drifting reimplementation
 of it.
 
-This isn't asserted, it's proven: 18 tests, including the property
+This isn't asserted, it's proven: 30 tests, including the property
 that actually matters —
 `tests/test_agents.py::test_fusion_denied_field_never_reaches_data_source`
 confirms a denied request produces **zero calls** to the underlying
@@ -36,7 +36,7 @@ data source, not just a discarded result.
 
 Every module in `agents/`, `mcp_servers/*_tool_logic.py`, and
 `guardrails/`'s integration logic runs with zero external dependencies
-— no network, no LLM, no MCP SDK required for the 21-test core suite,
+— no network, no LLM, no MCP SDK required for the 30-test core suite,
 which includes a real bug caught and fixed before ever being presented
 (see [`docs/incidents.md`](docs/incidents.md) #1) and a genuine edge
 case (a session with zero authorizations, not even the lowest tier,
@@ -79,15 +79,15 @@ active adversarial pressure, not just in isolated tests.
 | `security/visibility.py` | Accumulo-style visibility parser, reused directly from Project 6 | **Yes** — same proven logic |
 | `agents/authorization.py` | Pre-dispatch tool-call authorization, fail-closed | **Yes** — 5 tests |
 | `agents/session_registry.py` | Session-to-authorization lookup | **Yes** — 2 tests |
-| `mcp_servers/fusion_tool_logic.py` | Fusion Agent's per-field authorization logic | **Yes** — 3 tests |
+| `mcp_servers/fusion_tool_logic.py` | Fusion Agent's per-field authorization logic, plus argument validation for the real reader | **Yes** — 7 tests |
 | `mcp_servers/log_analysis_tool_logic.py` | Log Analysis Agent's logic | **Yes** — 2 tests |
-| `mcp_servers/threat_intel_tool_logic.py` | Threat Intel Agent's per-document logic | **Yes** — 1 test |
-| `mcp_servers/*_server.py` | MCP protocol wrappers around the above | Correct code, unexecuted |
+| `mcp_servers/threat_intel_tool_logic.py` | Threat Intel Agent's per-document logic, plus optional injection screening | **Yes** — 5 tests |
+| `mcp_servers/*_server.py` | MCP protocol wrappers around the above | **Yes** — run through the MCP Inspector over stdio, including a fail-closed refusal (#5); live data paths confirmed (#9–#11) |
 | `agents/orchestrator.py` | Deterministic multi-step dispatch + tracing | **Yes** — 2 tests |
-| `guardrails/injection_screening.py` | Prompt injection screening (integration logic + real classifier) | Integration: **yes**, 3 tests. Real LLM classifier: unexecuted |
-| `tests/test_agents.py` | 18 tests, all passing | **Yes** |
+| `guardrails/injection_screening.py` | Prompt injection screening (integration logic + real classifier) | Integration: **yes**, 3 tests. Real LLM classifier: **run for real on 3 hand-written cases** (#4) — a first result, not a measured false-positive rate. Now called from `threat_intel_tool_logic.py` when a classifier is passed (and by default in the Threat Intel MCP server), failing closed |
+| `tests/test_agents.py` | 30 tests, all passing | **Yes** |
 | `docs/architecture.md` | Full honest verified/unverified breakdown | — |
-| `docs/incidents.md` | 3 real findings from building this project | — |
+| `docs/incidents.md` | 14 real findings from building this project (#12–#14 added after the first 11) | — |
 
 ## Running the verified parts yourself
 
@@ -114,15 +114,20 @@ never called for `humint` at all.
 
 ## What I'd add next
 
-1. **Install `mcp` and `anthropic` somewhere with real network access**
-   and actually run each MCP server against a real client — the single
-   biggest remaining gap.
-2. Wire the three `NotImplementedError` stubs to Projects 1, 5, and 6's
-   real deployed endpoints (Project 5 needs per-document visibility
-   metadata added to its schema first — a real prerequisite, not just
-   wiring).
-3. Build the actual agent reasoning layer — an LLM call deciding what
-   to investigate, replacing the currently-hardcoded test plans.
-4. Confirm the real injection classifier actually makes the
-   discussing-vs-attacking distinction its prompt asks for, against
-   real adversarial documents, not just the mock used in testing.
+1. **Bind `session_id` to the caller's identity.** In the Fusion and
+   Threat Intel servers the session ID is a plain tool argument, so
+   anyone who can name a registered session can use its clearance.
+2. **Build an evaluation harness for the planner.** It has been run
+   once on one alert, before the `query_log_events` →
+   `classify_log_text` rename. Run many alerts and record the plans.
+3. **Measure the injection screen.** It passed three hand-written
+   cases; that is not a false-positive rate. Run it on a labeled set.
+4. **Close the loop in the planner.** The planner is plan-and-execute:
+   the model never sees results, so it cannot notice a denied result
+   or a skipped step. `plan_to_investigation_steps` now reports skipped
+   tool names; a loop would need that accounting too.
+5. **Re-run the live protocol path** for the Threat Intel and Fusion
+   servers after the argument-validation and screening changes, and
+   compile `AccumuloReader.java` against the cluster's classpath (the
+   change that reads the password from the environment has not been
+   compiled in this environment).

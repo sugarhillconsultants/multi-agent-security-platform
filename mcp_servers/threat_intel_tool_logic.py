@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from agents.authorization import SessionContext, ToolCallRequest, authorize_tool_call
+from guardrails.injection_screening import screen_document
 
 # In production, each retrieved document's visibility would be real
 # metadata already attached to it (e.g. stored alongside the document
@@ -32,9 +33,11 @@ class ThreatIntelResult:
     authorized_documents: list = field(default_factory=list)  # list of text
     denied_documents: list = field(default_factory=list)      # [{"reason": ...}]
     audit_trail: list = field(default_factory=list)
+    flagged_documents: list = field(default_factory=list)    # [{"reason": ...}] — screened out as injection
+    screening_results: list = field(default_factory=list)   # full InjectionScreeningResult audit record
 
 
-def query_threat_intel(session: SessionContext, query: str, data_source: DataSourceFn) -> ThreatIntelResult:
+def query_threat_intel(session: SessionContext, query: str, data_source: DataSourceFn, classifier_fn=None) -> ThreatIntelResult:
     """Retrieves candidate documents from data_source, then authorizes
     EACH ONE individually before including it in the result — a
     document the session isn't cleared for is excluded, with its
@@ -55,6 +58,20 @@ def query_threat_intel(session: SessionContext, query: str, data_source: DataSou
         result.audit_trail.append(decision)
 
         if decision.allowed:
+            if classifier_fn is not None:
+                # Screen AFTER authorization (a denied document is never
+                # examined) and BEFORE the text reaches any reasoning step.
+                # Fail closed: if the classifier raises, the document is
+                # excluded and the failure is recorded.
+                try:
+                    screened = screen_document(text, f"query:{query}", classifier_fn)
+                except Exception as e:  # noqa: BLE001
+                    result.flagged_documents.append({"reason": f"screening failed: {e}"})
+                    continue
+                result.screening_results.append(screened)
+                if screened.flagged:
+                    result.flagged_documents.append({"reason": screened.reasoning})
+                    continue
             result.authorized_documents.append(text)
         else:
             result.denied_documents.append({"reason": decision.reason})

@@ -120,7 +120,7 @@ def plan_investigation(alert_description: str):
     return [block for block in response.content if block.type == "tool_use"]
 
 
-def plan_to_investigation_steps(tool_use_blocks, tool_name_to_function: dict, extra_kwargs_by_tool: dict = None):
+def plan_to_investigation_steps(tool_use_blocks, tool_name_to_function: dict, extra_kwargs_by_tool: dict = None, skipped_tools: list = None):
     """Converts Claude's raw tool_use blocks into
     agents.orchestrator.InvestigationStep objects. Pure, deterministic
     conversion logic — fully testable without any LLM call, given a
@@ -134,7 +134,13 @@ def plan_to_investigation_steps(tool_use_blocks, tool_name_to_function: dict, ex
     call runs under. Merging extra_kwargs AFTER Claude's own `input`
     dict means a caller could also use this to override any field
     Claude provided, which is intentional: the calling code's values
-    always take precedence over whatever the model produced."""
+    always take precedence over whatever the model produced.
+
+    ACCOUNTING: a tool name that is not in the mapping is skipped (so
+    one bad name cannot crash the investigation) but never silently.
+    Pass a list as `skipped_tools` and every skipped name is appended
+    to it, so the caller can compare steps-in with steps-out and put
+    the skipped names in the audit trail."""
     from agents.orchestrator import InvestigationStep
 
     extra_kwargs_by_tool = extra_kwargs_by_tool or {}
@@ -143,6 +149,8 @@ def plan_to_investigation_steps(tool_use_blocks, tool_name_to_function: dict, ex
     for block in tool_use_blocks:
         tool_fn = tool_name_to_function.get(block.name)
         if tool_fn is None:
+            if skipped_tools is not None:
+                skipped_tools.append(block.name)
             continue  # Claude named a tool that doesn't exist in our mapping — skip, don't crash the whole plan
         kwargs = dict(block.input)
         kwargs.update(extra_kwargs_by_tool.get(block.name, {}))

@@ -435,6 +435,64 @@ integrations — Log Analysis, Threat Intel, and Fusion — are now
 verified end to end against real, live, deployed infrastructure, not
 mocks.
 
+## 12. Authorization decides who may ask — it did not decide what the question contains
+
+Found while preparing the lesson on this project, by reading how
+`real_accumulo_data_source` built its command. It assembled one shell
+string with the indicator pasted inside double quotes and ran it with
+`bash -c`. The indicator reaches that function from the planner (so,
+from alert text a model has read) or straight from an MCP caller, and
+the pre-dispatch authorization check does not look at argument
+contents — it decides which fields a session may see. An indicator
+such as `1.2.3.4"; echo INJECTED; echo "` closes the quote, ends the
+command, and starts its own. Confirmed by building the string with a
+stub that prints the command; nothing was run against the cluster.
+The service credential on this path is Accumulo's superuser, by
+design, so the pre-dispatch check is the only gate — which is why the
+arguments have to be clean.
+
+Fixed: the reader now runs as an argument list with no shell;
+`validate_indicator` accepts only an IPv4 address or a hostname and
+`validate_family` only word characters, both raising `ValueError`
+before any process starts; the password is passed to the child through
+its environment rather than the command line, and `AccumuloReader.java`
+reads it from `ACCUMULO_ROOT_PASSWORD` when no sixth argument is given.
+Tests cover accepted and hostile indicators, the command being a list
+with no shell or secret, and a hostile column family.
+
+**Not yet verified:** the Java change has not been compiled or run
+against the live cluster in this environment, and the fixed Python path
+has not been re-run live.
+
+## 13. A plan converter that skipped unknown tool names without saying so
+
+`plan_to_investigation_steps` skips any tool name it does not
+recognize, deliberately, so one bad name cannot crash an investigation.
+But after incident #8 renamed the log tool, a tool table still using
+the old name made every log step vanish with no error, and
+`tests/manual_check_real_planner.py` still imported the old name and
+failed with an ImportError. Fixed: an optional `skipped_tools` list
+receives every skipped name so a caller can compare steps in with steps
+out and record the skipped names; the manual script now uses
+`classify_log_text` and prints the skipped count. A test covers the
+stale-name case.
+
+## 14. The injection screen was built and verified but nothing called it
+
+`screen_documents_batch` and the real classifier passed three cases
+(#4), but no code path used them. `query_threat_intel` now accepts an
+optional `classifier_fn`: documents are screened after the
+authorization check (a denied document is never examined) and before
+the text is returned; flagged documents are excluded and recorded; a
+classifier failure excludes the document (fail closed). The Threat
+Intel MCP server enables screening by default and `INJECTION_SCREEN=off`
+disables it for local runs without an API key. Tests cover exclusion,
+the audit record, denied documents never reaching the classifier,
+fail-closed behavior, and unchanged behavior with no classifier.
+Still true: three hand-written cases are not a measured false-positive
+rate, and the orchestrator itself does not yet screen anything beyond
+what the Threat Intel tool returns.
+
 ## What's verified, and what genuinely isn't yet
 
 Every module in `agents/`, `mcp_servers/*_tool_logic.py`, and
