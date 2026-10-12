@@ -18,7 +18,7 @@ sys.path.insert(0, ".")
 
 def main():
     from agents.planner import plan_investigation, plan_to_investigation_steps
-    from mcp_servers.log_analysis_tool_logic import query_log_events
+    from mcp_servers.log_analysis_tool_logic import classify_log_text
     from mcp_servers.threat_intel_tool_logic import query_threat_intel
     from mcp_servers.fusion_tool_logic import query_fusion_data
 
@@ -38,13 +38,17 @@ def main():
         print(f"  - {block.name}({block.input})")
 
     tool_map = {
-        "query_log_events": query_log_events,
+        "classify_log_text": classify_log_text,
         "query_threat_intel": query_threat_intel,
         "query_fusion_data": query_fusion_data,
     }
 
-    steps = plan_to_investigation_steps(tool_use_blocks, tool_map)
-    print(f"\nConverted to {len(steps)} InvestigationStep(s) — ready to hand to run_investigation().")
+    skipped = []
+    steps = plan_to_investigation_steps(tool_use_blocks, tool_map, skipped_tools=skipped)
+    print(f"\n{len(tool_use_blocks)} tool call(s) planned, {len(steps)} step(s) built, {len(skipped)} skipped.")
+    if skipped:
+        print(f"  SKIPPED (not in the tool map): {skipped}")
+    print("Ready to hand to run_investigation().")
 
 
 if __name__ == "__main__":

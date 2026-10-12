@@ -80,3 +80,50 @@ def query_fusion_data(
             result.denied_fields.append({"field": family, "reason": decision.reason})
 
     return result
+
+
+# --- Argument validation for the real Accumulo reader -----------------
+# Authorization decides WHO may ask for a field; it says nothing about
+# what the arguments contain. The indicator reaches the reader from the
+# planner (so, from alert text a model has read) or straight from an MCP
+# caller, so it is validated here, before any process is started.
+import re as _re
+
+_IPV4 = _re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
+_HOSTNAME = _re.compile(r"^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
+_FAMILY = _re.compile(r"^[A-Za-z0-9_]{1,64}$")
+
+
+def validate_indicator(indicator: str) -> str:
+    """Accepts an IPv4 address or a hostname; rejects everything else
+    with a clear error. Raises ValueError."""
+    if not isinstance(indicator, str):
+        raise ValueError("indicator must be a string")
+    if _IPV4.match(indicator):
+        if all(0 <= int(octet) <= 255 for octet in indicator.split(".")):
+            return indicator
+        raise ValueError(f"invalid indicator: {indicator!r}")
+    if _HOSTNAME.match(indicator):
+        return indicator
+    raise ValueError(f"invalid indicator: {indicator!r}")
+
+
+def validate_family(family: str) -> str:
+    """Column families are a small fixed vocabulary of word characters."""
+    if not isinstance(family, str) or not _FAMILY.match(family):
+        raise ValueError(f"invalid column family: {family!r}")
+    return family
+
+
+def build_reader_command(indicator: str, family: str, classpath: str, reader_dir: str,
+                         table_name: str, instance_name: str, zookeepers: str) -> list:
+    """Returns the reader command as an ARGUMENT LIST (no shell), after
+    validating the two values that originate outside this code. The
+    password is deliberately not part of the command: it is passed to
+    the child process through its environment (ACCUMULO_ROOT_PASSWORD),
+    where it does not appear in the process list."""
+    return [
+        "java", "-cp", f"{classpath}:{reader_dir}", "AccumuloReader",
+        validate_indicator(indicator), validate_family(family),
+        table_name, instance_name, zookeepers,
+    ]

@@ -36,9 +36,13 @@ import java.util.Map;
 public class AccumuloReader {
 
     public static void main(String[] args) throws Exception {
-        if (args.length < 6) {
+        // The password is read from ACCUMULO_ROOT_PASSWORD when it is not
+        // given as a sixth argument (the preferred path: arguments are
+        // visible to other processes on the machine, the environment is not).
+        String envPassword = System.getenv("ACCUMULO_ROOT_PASSWORD");
+        if (args.length < 5 || (args.length < 6 && (envPassword == null || envPassword.isEmpty()))) {
             System.err.println("Usage: AccumuloReader <row> <columnFamily> <tableName> "
-                + "<instanceName> <zookeepers> <password>");
+                + "<instanceName> <zookeepers> [<password> | set ACCUMULO_ROOT_PASSWORD]");
             System.exit(1);
         }
 
@@ -47,7 +51,7 @@ public class AccumuloReader {
         String tableName = args[2];
         String instanceName = args[3];
         String zookeepers = args[4];
-        String password = args[5];
+        String password = args.length >= 6 ? args[5] : envPassword;
         String username = "root"; // matches this project's docker-compose ACCUMULO_ROOT_PASSWORD setup
 
         AccumuloClient client = Accumulo.newClient()
